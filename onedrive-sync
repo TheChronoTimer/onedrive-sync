@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+set -u
+
+HOST="limerickandclareetb-my.sharepoint.com"
+REMOTE="/personal/45_nicolas_bauermann_learner_lcetb_ie/Documents"
+LOCAL="/home/user/45.Nicolas.Bauermann@learner.lcetb.ie"
+CLI="$HOME/Programs/sharepoint-access/dist/cli.js"
+STATE="$HOME/.sharepoint-cli/sync-state"
+
+mkdir -p "$LOCAL" "$(dirname "$STATE")"
+
+declare -A REMOTE_FILES REMOTE_MODIFIED LOCAL_FILES OLD_LOCAL OLD_REMOTE
+
+sync_remote() {
+    local inventory_file
+    inventory_file="$(mktemp)"
+
+    if ! node "$CLI" inventory --host "$HOST" "$REMOTE" >"$inventory_file"; then
+        echo "ERRO: inventory remoto falhou. Sync cancelado."
+        rm -f "$inventory_file"
+        return 1
+    fi
+
+    while IFS='|' read -r type path size modified; do
+        [[ "$type" != "F" ]] && continue
+
+        relative="${path#"$REMOTE"/}"
+
+        # Forms nunca participa do sync.
+        [[ "$relative" == Forms || "$relative" == Forms/* ]] && continue
+
+        REMOTE_FILES["$relative"]="$path"
+        REMOTE_MODIFIED["$relative"]="$modified"
+    done < <(
+        python3 - "$inventory_file" <<'PY'
+import json, sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    data = json.load(f)
+
+for x in data["entries"]:
+    if x["type"] == "F":
+        print(
+            "F|"
+            + x["path"]
+            + "|"
+            + str(x.get("size", ""))
+            + "|"
+            + str(x.get("modified", ""))
+        )
+PY
+    )
+
+    rm -f "$inventory_file"
+}
+
+remote_folder_for() {
+    local relative="$1"
+    local directory="${relative%/*}"
+
+    if [[ "$directory" == "$relative" ]]; then
+        printf '%s' "$REMOTE"
+    else
+        printf '%s/%s' "$REMOTE" "$directory"
+    fi
+}
+
+put_file() {
+    local relative="$1"
+    local local_file="$2"
+
+    echo "PUT  $relative"
+
+    if ! node "$CLI" put \
+        --host "$HOST" \
+        "$local_file" \
+        "$(remote_folder_for "$relative")"
+    then
+        echo "ERRO: PUT falhou: $relative"
+        return 1
+    fi
+
+    return 0
+}
+
+get_file() {
+    local relative="$1"
+    local remote_path="$2"
+    local remote_modified="$3"
+    local local_file="$LOCAL/$relative"
+
+    echo "GET  $relative"
+
+    mkdir -p "$(dirname "$local_file")"
+
+    if ! node "$CLI" get \
+        --host "$HOST" \
+        --out "$local_file" \
+        "$remote_path"
+    then
+        echo "ERRO: GET falhou: $relative"
+        return 1
+    fi
+
+    touch -d "$remote_modified" "$local_file"
+    return 0
+}
+
+delete_remote() {
+    local relative="$1"
+    local remote_path="$2"
+
+    echo "DELETE REMOTE  $relative"
+
+    if ! node "$CLI" delete \
+        --host "$HOST" \
+        "$remote_path"
+    then
+        echo "ERRO: DELETE REMOTE falhou: $relative"
+        return 1
+    fi
+
+    return 0
+}
+
+sync_remote
+
+# Inventário local.
+while IFS= read -r -d '' local_file; do
+    relative="${local_file#"$LOCAL"/}"
+
+    [[ "$relative" == Forms || "$relative" == Forms/* ]] && continue
+
+    LOCAL_FILES["$relative"]="$local_file"
+done < <(find "$LOCAL" -type f -print0)
+
+# Estado anterior.
+if [[ -f "$STATE" ]]; then
+    while IFS='|' read -r path local_mtime remote_modified; do
+        [[ -z "$path" ]] && continue
+        OLD_LOCAL["$path"]="$local_mtime"
+        OLD_REMOTE["$path"]="$remote_modified"
+    done < "$STATE"
+fi
+
+NEW_STATE="$(mktemp)"
+ALL_PATHS="$(mktemp)"
+
+{
+    printf '%s\n' "${!REMOTE_FILES[@]}"
+    printf '%s\n' "${!LOCAL_FILES[@]}"
+    printf '%s\n' "${!OLD_LOCAL[@]}"
+    printf '%s\n' "${!OLD_REMOTE[@]}"
+} | sort -u > "$ALL_PATHS"
+
+while IFS= read -r relative; do
+    [[ -z "$relative" ]] && continue
+    [[ "$relative" == Forms || "$relative" == Forms/* ]] && continue
+
+    local_file="${LOCAL_FILES[$relative]-}"
+    remote_path="${REMOTE_FILES[$relative]-}"
+    remote_modified="${REMOTE_MODIFIED[$relative]-}"
+
+    old_local="${OLD_LOCAL[$relative]-}"
+    old_remote="${OLD_REMOTE[$relative]-}"
+
+    local_exists=0
+    remote_exists=0
+
+    [[ -n "$local_file" && -f "$local_file" ]] && local_exists=1
+    [[ -n "$remote_path" ]] && remote_exists=1
+
+    # ------------------------------------------------------------
+    # EXISTE NOS DOIS LADOS
+    # ------------------------------------------------------------
+    if (( local_exists && remote_exists )); then
+
+        local_mtime="$(stat -c %Y "$local_file")"
+        remote_mtime="$(date -d "$remote_modified" +%s)"
+
+        if [[ -n "$old_local" && -n "$old_remote" ]]; then
+            old_local_mtime=$((10#$old_local))
+            old_remote_mtime="$(date -d "$old_remote" +%s)"
+
+            local_changed=0
+            remote_changed=0
+
+            (( local_mtime > old_local_mtime )) && local_changed=1
+            (( remote_mtime > old_remote_mtime )) && remote_changed=1
+
+            if (( local_changed && !remote_changed )); then
+                put_file "$relative" "$local_file" || true
+
+            elif (( remote_changed && !local_changed )); then
+                get_file "$relative" "$remote_path" "$remote_modified" || true
+
+            elif (( local_changed && remote_changed )); then
+                if (( local_mtime > remote_mtime )); then
+                    put_file "$relative" "$local_file" || true
+                else
+                    get_file "$relative" "$remote_path" "$remote_modified" || true
+                fi
+            fi
+        fi
+
+    # ------------------------------------------------------------
+    # SÓ NO REMOTO
+    # ------------------------------------------------------------
+    elif (( remote_exists && !local_exists )); then
+
+        if [[ -z "$old_local" || -z "$old_remote" ]]; then
+            get_file "$relative" "$remote_path" "$remote_modified" || true
+
+        else
+            remote_mtime="$(date -d "$remote_modified" +%s)"
+            old_remote_mtime="$(date -d "$old_remote" +%s)"
+
+            if (( remote_mtime > old_remote_mtime )); then
+                get_file "$relative" "$remote_path" "$remote_modified" || true
+            else
+                delete_remote "$relative" "$remote_path" || true
+            fi
+        fi
+
+    # ------------------------------------------------------------
+    # SÓ NO LOCAL
+    # ------------------------------------------------------------
+    elif (( local_exists && !remote_exists )); then
+
+        if [[ -z "$old_local" || -z "$old_remote" ]]; then
+            put_file "$relative" "$local_file" || true
+
+        else
+            local_mtime="$(stat -c %Y "$local_file")"
+            old_local_mtime=$((10#$old_local))
+
+            if (( local_mtime > old_local_mtime )); then
+                put_file "$relative" "$local_file" || true
+            else
+                echo "DELETE LOCAL  $relative"
+                rm -f "$local_file"
+            fi
+        fi
+    fi
+
+    # ------------------------------------------------------------
+    # NOVO ESTADO
+    # ------------------------------------------------------------
+    if [[ -f "$LOCAL/$relative" && -n "${REMOTE_MODIFIED[$relative]-}" ]]; then
+        printf '%s|%s|%s\n' \
+            "$relative" \
+            "$(stat -c %Y "$LOCAL/$relative")" \
+            "${REMOTE_MODIFIED[$relative]}" >> "$NEW_STATE"
+
+    elif [[ -f "$LOCAL/$relative" ]]; then
+        printf '%s|%s|%s\n' \
+            "$relative" \
+            "$(stat -c %Y "$LOCAL/$relative")" \
+            "$(date -u -d "@$(stat -c %Y "$LOCAL/$relative")" '+%Y-%m-%dT%H:%M:%SZ')" >> "$NEW_STATE"
+    fi
+
+done < "$ALL_PATHS"
+
+mv "$NEW_STATE" "$STATE"
+rm -f "$ALL_PATHS"
