@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 set -u
 
+AUTO_YES=0
+
+if [[ "${1:-}" == "-y" ]]; then
+    AUTO_YES=1
+fi
+
 HOST="limerickandclareetb-my.sharepoint.com"
-REMOTE="/personal/09_your_name_learner_lcetb_ie/Documents"
-LOCAL="/home/user/09.your.name@learner.lcetb.ie"
+REMOTE="/personal/45_nicolas_bauermann_learner_lcetb_ie/Documents"
+LOCAL="/home/user/45.Nicolas.Bauermann@learner.lcetb.ie"
 CLI="$HOME/Programs/sharepoint-access/dist/cli.js"
 STATE="$HOME/.sharepoint-cli/sync-state"
 
@@ -109,21 +115,55 @@ get_file() {
 delete_remote() {
     local relative="$1"
     local remote_path="$2"
+    local remote_modified="$3"
 
-    echo "DELETE REMOTE  $relative"
+    if (( AUTO_YES )); then
+        echo "DELETE REMOTE  $relative"
 
-    if ! node "$CLI" delete \
-        --host "$HOST" \
-        "$remote_path"
-    then
-        echo "ERRO: DELETE REMOTE falhou: $relative"
-        return 1
+        if ! node "$CLI" delete \
+            --host "$HOST" \
+            "$remote_path"
+        then
+            echo "ERRO: DELETE REMOTE falhou: $relative"
+            return 1
+        fi
+
+        return 0
     fi
+
+    printf 'DELETE REMOTE "%s"? (Y/n) ' "$relative" > /dev/tty
+	read -r answer < /dev/tty
+
+    case "$answer" in
+        ""|Y|y|YES|yes|Yes)
+            echo "DELETE REMOTE  $relative"
+
+            if ! node "$CLI" delete \
+                --host "$HOST" \
+                "$remote_path"
+            then
+                echo "ERRO: DELETE REMOTE falhou: $relative"
+                return 1
+            fi
+            ;;
+
+        *)
+            echo "DELETE REMOTE recusado. Baixando versão remota: $relative"
+
+            if ! get_file "$relative" "$remote_path" "$remote_modified"; then
+                echo "ERRO: GET falhou: $relative"
+                return 1
+            fi
+            ;;
+    esac
 
     return 0
 }
 
-sync_remote
+if ! sync_remote; then
+    echo "ERRO: inventory remoto falhou. Sync cancelado."
+    exit 1
+fi
 
 # Inventário local.
 while IFS= read -r -d '' local_file; do
@@ -206,21 +246,13 @@ while IFS= read -r relative; do
     # ------------------------------------------------------------
     # SÓ NO REMOTO
     # ------------------------------------------------------------
-    elif (( remote_exists && !local_exists )); then
+	elif (( remote_exists && !local_exists )); then
 
-        if [[ -z "$old_local" || -z "$old_remote" ]]; then
-            get_file "$relative" "$remote_path" "$remote_modified" || true
-
-        else
-            remote_mtime="$(date -d "$remote_modified" +%s)"
-            old_remote_mtime="$(date -d "$old_remote" +%s)"
-
-            if (( remote_mtime > old_remote_mtime )); then
-                get_file "$relative" "$remote_path" "$remote_modified" || true
-            else
-                delete_remote "$relative" "$remote_path" || true
-            fi
-        fi
+	    if [[ -z "$old_local" || -z "$old_remote" ]]; then
+	        get_file "$relative" "$remote_path" "$remote_modified" || true
+	    else
+	        delete_remote "$relative" "$remote_path" "$remote_modified" || true
+	    fi
 
     # ------------------------------------------------------------
     # SÓ NO LOCAL
