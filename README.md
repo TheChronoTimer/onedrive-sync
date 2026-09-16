@@ -14,24 +14,30 @@ Then verify the session:
 
 `node dist/cli.js --host YOUR_TENANT.sharepoint.com auth-check`
 
-If the session expires, renew it with:
+If the session expires, renew it with the same command as the one-time setup:
 
-`node dist/cli.js --host YOUR_TENANT.sharepoint.com auth-renew`
+`node dist/cli.js --host YOUR_TENANT.sharepoint.com login`
+
 
 ## Storage:
-Edit the values on the file `./onedrive-sync`.
+Edit the values on the head of the file `./onedrive-sync`.
 
 The SharePoint address:
 
-`HOST="limerickandclareetb-my.sharepoint.com"`
+`HOST="<sharepoint address>"`
 
 The user's remote path (**DO NOT** remove `/Documents` unless you know what you're doing):
 
-`REMOTE="/personal/09_your_name_learner_lcetb_ie/Documents"`
+`REMOTE="/personal/your_name_your_email_com/Documents"`
+> **Note:** dots, at (`@`), and most common special characters become underscores (`_`)
 
 The user's local path (where your files will be synchronized):
 
-`LOCAL="/home/user/09.name.name@learner.lcetb.ie"`
+`LOCAL="/home/user/<something>"`
+
+The installation path:
+
+`CLI="<your path>/onedrive-sync/dist/cli.js"`
 
 ## Run:
 To synchronize your files, run:
