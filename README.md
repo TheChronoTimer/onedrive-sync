@@ -1,3 +1,59 @@
+# Fork Instructions:
+
+## Installation:
+Clone the repository, install dependencies, and build the CLI:
+
+`git clone https://github.com/TheChronoTimer/onedrive-sync.git && cd onedrive-sync && npm ci && npm run build`
+
+## Configuration:
+Run the one-time authentication/setup commands:
+
+`node dist/cli.js --host YOUR_TENANT.sharepoint.com login`
+
+Then verify the session:
+
+`node dist/cli.js --host YOUR_TENANT.sharepoint.com auth-check`
+
+If the session expires, renew it with:
+
+`node dist/cli.js --host YOUR_TENANT.sharepoint.com auth-renew`
+
+## Storage:
+Edit the values on the file `./onedrive-sync`.
+
+The SharePoint address:
+
+`HOST="limerickandclareetb-my.sharepoint.com"`
+
+The user's remote path (**DO NOT** remove `/Documents` unless you know what you're doing):
+
+`REMOTE="/personal/09_your_name_learner_lcetb_ie/Documents"`
+
+The user's local path (where your files will be synchronized):
+
+`LOCAL="/home/user/09.name.name@learner.lcetb.ie"`
+
+## Run:
+To synchronize your files, run:
+
+`./onedrive-sync`
+
+**IMPORTANT:** The order of the operations is highly relevant for synchronization.
+### IS STRONGLY RECOMENDED A BACKUP BEFORE SYNCHRONIZING THE FIRST TIME
+> **Note:** The script `./onedrive-sync` script can be moved or copied freely. It can therefore be executed from another location, as long as its configuration contains the correct paths.
+
+## Uninstall:
+
+Remove the project directory and the sync script if they are no longer needed.
+
+Then remove the stored authentication and synchronization state:
+
+`rm -rf ~/.sharepoint-cli`
+
+---
+---
+---
+
 # sharepoint-access (`sharepoint-cli`)
 
 TypeScript CLI for SharePoint Online, driven by a browser-captured session.
