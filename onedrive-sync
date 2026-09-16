@@ -7,10 +7,10 @@ if [[ "${1:-}" == "-y" ]]; then
     AUTO_YES=1
 fi
 
-HOST="limerickandclareetb-my.sharepoint.com"
-REMOTE="/personal/45_nicolas_bauermann_learner_lcetb_ie/Documents"
-LOCAL="/home/user/45.Nicolas.Bauermann@learner.lcetb.ie"
-CLI="$HOME/Programs/sharepoint-access/dist/cli.js"
+HOST="<sharepoint address>"
+REMOTE="/personal/<your account>/Documents"
+LOCAL="/home/user/<something>"
+CLI="<your path>/onedrive-sync/dist/cli.js"
 STATE="$HOME/.sharepoint-cli/sync-state"
 
 mkdir -p "$LOCAL" "$(dirname "$STATE")"
