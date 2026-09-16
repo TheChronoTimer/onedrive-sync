@@ -2,8 +2,8 @@
 set -u
 
 HOST="limerickandclareetb-my.sharepoint.com"
-REMOTE="/personal/45_nicolas_bauermann_learner_lcetb_ie/Documents"
-LOCAL="/home/user/45.Nicolas.Bauermann@learner.lcetb.ie"
+REMOTE="/personal/09_your_name_learner_lcetb_ie/Documents"
+LOCAL="/home/user/09.your.name@learner.lcetb.ie"
 CLI="$HOME/Programs/sharepoint-access/dist/cli.js"
 STATE="$HOME/.sharepoint-cli/sync-state"
 
