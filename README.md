@@ -35,7 +35,8 @@ To synchronize your files, run:
 > **Note:** The script `./onedrive-sync` script can be moved or copied freely. It can therefore be executed from another location, as long as its configuration contains the correct paths.
 
 ## Configuration:
->**Note:** This session is now optional. The file `./onedrive-sync` can now handle everything 
+>**Note:** This session is now optional. The file `./onedrive-sync` can now handle everything
+
 Run the one-time authentication/setup commands:
 
 `node dist/cli.js --host YOUR_TENANT.sharepoint.com login`
