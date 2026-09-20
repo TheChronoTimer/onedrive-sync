@@ -5,20 +5,6 @@ Clone the repository, install dependencies, and build the CLI:
 
 `git clone https://github.com/TheChronoTimer/onedrive-sync.git && cd onedrive-sync && npm ci && npm run build`
 
-## Configuration:
-Run the one-time authentication/setup commands:
-
-`node dist/cli.js --host YOUR_TENANT.sharepoint.com login`
-
-Then verify the session:
-
-`node dist/cli.js --host YOUR_TENANT.sharepoint.com auth-check`
-
-If the session expires, renew it with the same command as the one-time setup:
-
-`node dist/cli.js --host YOUR_TENANT.sharepoint.com login`
-
-
 ## Storage:
 Edit the values on the head of the file `./onedrive-sync`.
 
@@ -47,6 +33,20 @@ To synchronize your files, run:
 **IMPORTANT:** The order of the operations is highly relevant for synchronization.
 ### IS STRONGLY RECOMENDED A BACKUP BEFORE SYNCHRONIZING THE FIRST TIME
 > **Note:** The script `./onedrive-sync` script can be moved or copied freely. It can therefore be executed from another location, as long as its configuration contains the correct paths.
+
+## Configuration:
+>**Note:** This session is now optional. The file `./onedrive-sync` can now handle everything 
+Run the one-time authentication/setup commands:
+
+`node dist/cli.js --host YOUR_TENANT.sharepoint.com login`
+
+Then verify the session:
+
+`node dist/cli.js --host YOUR_TENANT.sharepoint.com auth-check`
+
+If the session expires, renew it with the same command as the one-time setup:
+
+`node dist/cli.js --host YOUR_TENANT.sharepoint.com login`
 
 ## Uninstall:
 
