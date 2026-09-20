@@ -17,11 +17,73 @@ mkdir -p "$LOCAL" "$(dirname "$STATE")"
 
 declare -A REMOTE_FILES REMOTE_MODIFIED LOCAL_FILES OLD_LOCAL OLD_REMOTE
 
+# ------------------------------------------------------------
+# Executa o CLI e renova a autenticação automaticamente
+# ------------------------------------------------------------
+run_cli() {
+    local output_file
+    local exit_code
+    local output
+
+    output_file="$(mktemp)"
+
+    node "$CLI" "$@" >"$output_file" 2>&1
+    exit_code=$?
+
+    if (( exit_code == 0 )); then
+        cat "$output_file"
+        rm -f "$output_file"
+        return 0
+    fi
+
+    output="$(cat "$output_file")"
+
+    # Exibe o erro original.
+    printf '%s\n' "$output" >&2
+
+    # Só tenta re-login quando o erro indica autenticação expirada.
+    if [[ "$output" != *'"auth_required"'* &&
+          "$output" != *'"status":401'* &&
+          "$output" != *'401'* ]]; then
+        rm -f "$output_file"
+        return "$exit_code"
+    fi
+
+    rm -f "$output_file"
+
+    echo "AVISO: sessão do SharePoint expirada. Renovando autenticação..." >&2
+
+    if ! node "$CLI" --host "$HOST" login >&2; then
+        echo "ERRO: re-login do SharePoint falhou. Sync cancelado." >&2
+        return 1
+    fi
+
+    echo "INFO: verificando nova sessão..." >&2
+
+    local auth_check
+    auth_check="$(node "$CLI" --host "$HOST" auth-check 2>&1)"
+    local auth_exit=$?
+
+    printf '%s\n' "$auth_check" >&2
+
+    if (( auth_exit != 0 )) ||
+       [[ "$auth_check" != *'"overall": "ok"'* &&
+          "$auth_check" != *'"overall":"ok"'* ]]; then
+        echo "ERRO: autenticação não foi validada. Sync cancelado." >&2
+        return 1
+    fi
+
+    echo "INFO: autenticação renovada. Repetindo operação..." >&2
+
+    # Repete a operação original UMA única vez.
+    node "$CLI" "$@"
+}
+
 sync_remote() {
     local inventory_file
     inventory_file="$(mktemp)"
 
-    if ! node "$CLI" inventory --host "$HOST" "$REMOTE" >"$inventory_file"; then
+    if ! run_cli inventory --host "$HOST" "$REMOTE" >"$inventory_file"; then
         echo "ERRO: inventory remoto falhou. Sync cancelado."
         rm -f "$inventory_file"
         return 1
@@ -77,7 +139,7 @@ put_file() {
 
     echo "PUT  $relative"
 
-    if ! node "$CLI" put \
+    if ! run_cli put \
         --host "$HOST" \
         "$local_file" \
         "$(remote_folder_for "$relative")"
@@ -99,7 +161,7 @@ get_file() {
 
     mkdir -p "$(dirname "$local_file")"
 
-    if ! node "$CLI" get \
+    if ! run_cli get \
         --host "$HOST" \
         --out "$local_file" \
         "$remote_path"
@@ -120,7 +182,7 @@ delete_remote() {
     if (( AUTO_YES )); then
         echo "DELETE REMOTE  $relative"
 
-        if ! node "$CLI" delete \
+        if ! run_cli delete \
             --host "$HOST" \
             "$remote_path"
         then
@@ -138,7 +200,7 @@ delete_remote() {
         ""|Y|y|YES|yes|Yes)
             echo "DELETE REMOTE  $relative"
 
-            if ! node "$CLI" delete \
+            if ! run_cli delete \
                 --host "$HOST" \
                 "$remote_path"
             then
