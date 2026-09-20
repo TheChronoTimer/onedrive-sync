@@ -130,6 +130,7 @@ export default [
       'build/**',
       'coverage/**',
       '.venv/**',
+      '.remember/**',
       '*.min.js',
       '.env*',
       '!.env.example',
