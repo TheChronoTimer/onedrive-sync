@@ -133,9 +133,32 @@ remote_folder_for() {
     fi
 }
 
+remote_mkdir() {
+    local relative_dir="$1"
+    local current="$REMOTE"
+
+    IFS='/' read -ra parts <<< "$relative_dir"
+
+    for part in "${parts[@]}"; do
+        [[ -z "$part" ]] && continue
+
+        current="$current/$part"
+
+        run_cli mkdir \
+            --host "$HOST" \
+            "$current" >/dev/null 2>&1 || true
+    done
+}
+
 put_file() {
     local relative="$1"
     local local_file="$2"
+
+    local directory="${relative%/*}"
+
+    if [[ "$directory" != "$relative" ]]; then
+        remote_mkdir "$directory"
+    fi
 
     echo "PUT  $relative"
 
