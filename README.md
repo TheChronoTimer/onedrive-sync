@@ -39,15 +39,15 @@ To synchronize your files, run:
 
 Run the one-time authentication/setup commands:
 
-`node dist/cli.js --host YOUR_TENANT.sharepoint.com login`
+`node dist/cli.js --host YOUR_TENANT.sharepoint.example.com login`
 
 Then verify the session:
 
-`node dist/cli.js --host YOUR_TENANT.sharepoint.com auth-check`
+`node dist/cli.js --host YOUR_TENANT.sharepoint.example.com auth-check`
 
 If the session expires, renew it with the same command as the one-time setup:
 
-`node dist/cli.js --host YOUR_TENANT.sharepoint.com login`
+`node dist/cli.js --host YOUR_TENANT.sharepoint.example.com login`
 
 ## Uninstall:
 
