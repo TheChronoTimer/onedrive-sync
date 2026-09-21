@@ -39,10 +39,8 @@ run_cli() {
 
     output="$(cat "$output_file")"
 
-    # Exibe o erro original.
     printf '%s\n' "$output" >&2
 
-    # Só tenta re-login quando o erro indica autenticação expirada.
     if [[ "$output" != *'"auth_required"'* &&
           "$output" != *'"status":401'* &&
           "$output" != *'401'* ]]; then
@@ -76,10 +74,12 @@ run_cli() {
 
     echo "INFO: autenticação renovada. Repetindo operação..." >&2
 
-    # Repete a operação original UMA única vez.
     node "$CLI" "$@"
 }
 
+# ------------------------------------------------------------
+# Inventário remoto
+# ------------------------------------------------------------
 sync_remote() {
     local inventory_file
     inventory_file="$(mktemp)"
@@ -93,24 +93,21 @@ sync_remote() {
     while IFS='|' read -r type path size modified; do
         relative="${path#"$REMOTE"/}"
 
-        # Ignora a própria raiz, se por acaso vier listada.
         [[ "$relative" == "$path" ]] && continue
         [[ -z "$relative" ]] && continue
 
-        # Forms nunca participa do sync.
         [[ "$relative" == Forms || "$relative" == Forms/* ]] && continue
 
         if [[ "$type" == "F" ]]; then
             REMOTE_FILES["$relative"]="$path"
             REMOTE_MODIFIED["$relative"]="$modified"
         else
-            # Qualquer coisa que não seja arquivo é tratada como diretório
-            # (o CLI pode reportar pastas com outro "type", ex. "D").
             REMOTE_DIRS["$relative"]="$path"
         fi
     done < <(
         python3 - "$inventory_file" <<'PY'
-import json, sys
+import json
+import sys
 
 with open(sys.argv[1], encoding="utf-8") as f:
     data = json.load(f)
@@ -142,6 +139,9 @@ remote_folder_for() {
     fi
 }
 
+# ------------------------------------------------------------
+# Cria diretórios remotos
+# ------------------------------------------------------------
 remote_mkdir() {
     local relative_dir="$1"
     local current="$REMOTE"
@@ -159,8 +159,6 @@ remote_mkdir() {
     done
 }
 
-# Verifica se uma pasta remota ainda tem arquivos ou subpastas
-# conhecidos dentro dela (usado para não apagar antes da hora).
 remote_dir_has_children() {
     local relative="$1"
     local other
@@ -176,6 +174,13 @@ remote_dir_has_children() {
     return 1
 }
 
+# ------------------------------------------------------------
+# PUT
+#
+# IMPORTANTE:
+# --overwrite permite atualizar arquivos que já existem no
+# SharePoint.
+# ------------------------------------------------------------
 put_file() {
     local relative="$1"
     local local_file="$2"
@@ -190,6 +195,7 @@ put_file() {
 
     if ! run_cli put \
         --host "$HOST" \
+        --overwrite \
         "$local_file" \
         "$(remote_folder_for "$relative")"
     then
@@ -200,6 +206,9 @@ put_file() {
     return 0
 }
 
+# ------------------------------------------------------------
+# GET
+# ------------------------------------------------------------
 get_file() {
     local relative="$1"
     local remote_path="$2"
@@ -223,6 +232,9 @@ get_file() {
     return 0
 }
 
+# ------------------------------------------------------------
+# DELETE REMOTO
+# ------------------------------------------------------------
 delete_remote() {
     local relative="$1"
     local remote_path="$2"
@@ -243,7 +255,7 @@ delete_remote() {
     fi
 
     printf 'DELETE REMOTE "%s"? (Y/n) ' "$relative" > /dev/tty
-	read -r answer < /dev/tty
+    read -r answer < /dev/tty
 
     case "$answer" in
         ""|Y|y|YES|yes|Yes)
@@ -271,12 +283,17 @@ delete_remote() {
     return 0
 }
 
+# ------------------------------------------------------------
+# INVENTÁRIO REMOTO
+# ------------------------------------------------------------
 if ! sync_remote; then
     echo "ERRO: inventory remoto falhou. Sync cancelado."
     exit 1
 fi
 
-# Inventário local (arquivos).
+# ------------------------------------------------------------
+# INVENTÁRIO LOCAL - arquivos
+# ------------------------------------------------------------
 while IFS= read -r -d '' local_file; do
     relative="${local_file#"$LOCAL"/}"
 
@@ -285,7 +302,9 @@ while IFS= read -r -d '' local_file; do
     LOCAL_FILES["$relative"]="$local_file"
 done < <(find "$LOCAL" -type f -print0)
 
-# Inventário local (diretórios, inclusive vazios).
+# ------------------------------------------------------------
+# INVENTÁRIO LOCAL - diretórios
+# ------------------------------------------------------------
 while IFS= read -r -d '' local_dir; do
     relative="${local_dir#"$LOCAL"/}"
 
@@ -295,19 +314,25 @@ while IFS= read -r -d '' local_dir; do
     LOCAL_DIRS["$relative"]=1
 done < <(find "$LOCAL" -mindepth 1 -type d -print0)
 
-# Estado anterior (arquivos).
+# ------------------------------------------------------------
+# ESTADO ANTERIOR - arquivos
+# ------------------------------------------------------------
 if [[ -f "$STATE" ]]; then
     while IFS='|' read -r path local_mtime remote_modified; do
         [[ -z "$path" ]] && continue
+
         OLD_LOCAL["$path"]="$local_mtime"
         OLD_REMOTE["$path"]="$remote_modified"
     done < "$STATE"
 fi
 
-# Estado anterior (diretórios).
+# ------------------------------------------------------------
+# ESTADO ANTERIOR - diretórios
+# ------------------------------------------------------------
 if [[ -f "$DIR_STATE" ]]; then
     while IFS= read -r relative; do
         [[ -z "$relative" ]] && continue
+
         OLD_DIRS["$relative"]=1
     done < "$DIR_STATE"
 fi
@@ -322,9 +347,16 @@ ALL_PATHS="$(mktemp)"
     printf '%s\n' "${!OLD_REMOTE[@]}"
 } | sort -u > "$ALL_PATHS"
 
+# ------------------------------------------------------------
+# SINCRONIZAÇÃO DE ARQUIVOS
+# ------------------------------------------------------------
 while IFS= read -r relative; do
     [[ -z "$relative" ]] && continue
     [[ "$relative" == Forms || "$relative" == Forms/* ]] && continue
+
+    # Só será colocado no sync-state se tudo relacionado a este
+    # arquivo terminar com sucesso.
+    sync_ok=1
 
     local_file="${LOCAL_FILES[$relative]-}"
     remote_path="${REMOTE_FILES[$relative]-}"
@@ -339,15 +371,16 @@ while IFS= read -r relative; do
     [[ -n "$local_file" && -f "$local_file" ]] && local_exists=1
     [[ -n "$remote_path" ]] && remote_exists=1
 
-    # ------------------------------------------------------------
+    # --------------------------------------------------------
     # EXISTE NOS DOIS LADOS
-    # ------------------------------------------------------------
+    # --------------------------------------------------------
     if (( local_exists && remote_exists )); then
 
         local_mtime="$(stat -c %Y "$local_file")"
         remote_mtime="$(date -d "$remote_modified" +%s)"
 
         if [[ -n "$old_local" && -n "$old_remote" ]]; then
+
             old_local_mtime=$((10#$old_local))
             old_remote_mtime="$(date -d "$old_remote" +%s)"
 
@@ -358,78 +391,114 @@ while IFS= read -r relative; do
             (( remote_mtime > old_remote_mtime )) && remote_changed=1
 
             if (( local_changed && !remote_changed )); then
-                put_file "$relative" "$local_file" || true
+
+                if ! put_file "$relative" "$local_file"; then
+                    sync_ok=0
+                fi
 
             elif (( remote_changed && !local_changed )); then
-                get_file "$relative" "$remote_path" "$remote_modified" || true
+
+                if ! get_file "$relative" "$remote_path" "$remote_modified"; then
+                    sync_ok=0
+                fi
 
             elif (( local_changed && remote_changed )); then
+
                 if (( local_mtime > remote_mtime )); then
-                    put_file "$relative" "$local_file" || true
+                    if ! put_file "$relative" "$local_file"; then
+                        sync_ok=0
+                    fi
                 else
-                    get_file "$relative" "$remote_path" "$remote_modified" || true
+                    if ! get_file "$relative" "$remote_path" "$remote_modified"; then
+                        sync_ok=0
+                    fi
                 fi
             fi
         fi
 
-    # ------------------------------------------------------------
+    # --------------------------------------------------------
     # SÓ NO REMOTO
-    # ------------------------------------------------------------
-	elif (( remote_exists && !local_exists )); then
+    # --------------------------------------------------------
+    elif (( remote_exists && !local_exists )); then
 
-	    if [[ -z "$old_local" || -z "$old_remote" ]]; then
-	        get_file "$relative" "$remote_path" "$remote_modified" || true
-	    else
-	        delete_remote "$relative" "$remote_path" "$remote_modified" || true
-	    fi
+        if [[ -z "$old_local" || -z "$old_remote" ]]; then
 
-    # ------------------------------------------------------------
+            if ! get_file "$relative" "$remote_path" "$remote_modified"; then
+                sync_ok=0
+            fi
+
+        else
+
+            if ! delete_remote "$relative" "$remote_path" "$remote_modified"; then
+                sync_ok=0
+            fi
+
+        fi
+
+    # --------------------------------------------------------
     # SÓ NO LOCAL
-    # ------------------------------------------------------------
+    # --------------------------------------------------------
     elif (( local_exists && !remote_exists )); then
 
         if [[ -z "$old_local" || -z "$old_remote" ]]; then
-            put_file "$relative" "$local_file" || true
+
+            if ! put_file "$relative" "$local_file"; then
+                sync_ok=0
+            fi
 
         else
+
             local_mtime="$(stat -c %Y "$local_file")"
             old_local_mtime=$((10#$old_local))
 
             if (( local_mtime > old_local_mtime )); then
-                put_file "$relative" "$local_file" || true
+
+                if ! put_file "$relative" "$local_file"; then
+                    sync_ok=0
+                fi
+
             else
+
                 echo "DELETE LOCAL  $relative"
                 rm -f "$local_file"
             fi
         fi
     fi
 
-    # ------------------------------------------------------------
+    # --------------------------------------------------------
     # NOVO ESTADO
-    # ------------------------------------------------------------
-    if [[ -f "$LOCAL/$relative" && -n "${REMOTE_MODIFIED[$relative]-}" ]]; then
-        printf '%s|%s|%s\n' \
-            "$relative" \
-            "$(stat -c %Y "$LOCAL/$relative")" \
-            "${REMOTE_MODIFIED[$relative]}" >> "$NEW_STATE"
+    #
+    # Só salva o arquivo no estado se a sincronização terminou
+    # corretamente.
+    # --------------------------------------------------------
+    if (( sync_ok )); then
 
-    elif [[ -f "$LOCAL/$relative" ]]; then
-        printf '%s|%s|%s\n' \
-            "$relative" \
-            "$(stat -c %Y "$LOCAL/$relative")" \
-            "$(date -u -d "@$(stat -c %Y "$LOCAL/$relative")" '+%Y-%m-%dT%H:%M:%SZ')" >> "$NEW_STATE"
+        if [[ -f "$LOCAL/$relative" && -n "${REMOTE_MODIFIED[$relative]-}" ]]; then
+
+            printf '%s|%s|%s\n' \
+                "$relative" \
+                "$(stat -c %Y "$LOCAL/$relative")" \
+                "${REMOTE_MODIFIED[$relative]}" >> "$NEW_STATE"
+
+        elif [[ -f "$LOCAL/$relative" ]]; then
+
+            printf '%s|%s|%s\n' \
+                "$relative" \
+                "$(stat -c %Y "$LOCAL/$relative")" \
+                "$(date -u -d "@$(stat -c %Y "$LOCAL/$relative")" '+%Y-%m-%dT%H:%M:%SZ')" \
+                >> "$NEW_STATE"
+        fi
+
+    else
+
+        echo "AVISO: estado não atualizado para $relative porque a sincronização falhou."
+
     fi
 
 done < "$ALL_PATHS"
 
 # ==================================================================
-# Sincronização de diretórios (inclusive os vazios).
-#
-# Diretório não tem "conteúdo" pra comparar por data, então o
-# controle aqui é por presença/ausência: se uma pasta já era
-# conhecida dos dois lados numa execução anterior e agora só existe
-# de um lado, foi apagada do outro lado e precisa refletir isso.
-# Se é nova de um lado só, precisa ser criada do outro.
+# SINCRONIZAÇÃO DE DIRETÓRIOS
 # ==================================================================
 
 ALL_DIRS_DEPTH="$(mktemp)"
@@ -438,46 +507,61 @@ ALL_DIRS_DEPTH="$(mktemp)"
     printf '%s\n' "${!REMOTE_DIRS[@]}"
     printf '%s\n' "${!LOCAL_DIRS[@]}"
     printf '%s\n' "${!OLD_DIRS[@]}"
-} | sort -u | awk -F'/' '{ print (NF-1) "\t" $0 }' | sort -t$'\t' -n -k1,1 > "$ALL_DIRS_DEPTH"
+} | sort -u |
+    awk -F'/' '{ print (NF-1) "\t" $0 }' |
+    sort -t$'\t' -n -k1,1 > "$ALL_DIRS_DEPTH"
 
-# Passo 1: cria o que falta, do mais raso para o mais fundo, pra
-# garantir que a pasta-pai já exista quando a filha for criada.
+# ------------------------------------------------------------
+# Passo 1: cria o que falta
+# ------------------------------------------------------------
 while IFS=$'\t' read -r _depth relative; do
     [[ -z "$relative" ]] && continue
 
     remote_exists=0
     local_exists=0
+
     [[ -n "${REMOTE_DIRS[$relative]-}" ]] && remote_exists=1
     [[ -n "${LOCAL_DIRS[$relative]-}" ]] && local_exists=1
+
     was_known=0
     [[ -n "${OLD_DIRS[$relative]-}" ]] && was_known=1
 
     if (( remote_exists && !local_exists && !was_known )); then
+
         echo "MKDIR LOCAL  $relative"
+
         mkdir -p "$LOCAL/$relative"
         LOCAL_DIRS["$relative"]=1
 
     elif (( local_exists && !remote_exists && !was_known )); then
+
         echo "MKDIR REMOTE  $relative"
+
         remote_mkdir "$relative"
         REMOTE_DIRS["$relative"]="$REMOTE/$relative"
     fi
+
 done < "$ALL_DIRS_DEPTH"
 
-# Passo 2: apaga o que sumiu de um lado, do mais fundo para o mais
-# raso (senão a pasta-pai nunca fica vazia a tempo de ser removida).
+# ------------------------------------------------------------
+# Passo 2: apaga o que sumiu
+# ------------------------------------------------------------
 while IFS=$'\t' read -r _depth relative; do
     [[ -z "$relative" ]] && continue
 
     remote_exists=0
     local_exists=0
+
     [[ -n "${REMOTE_DIRS[$relative]-}" ]] && remote_exists=1
     [[ -n "${LOCAL_DIRS[$relative]-}" ]] && local_exists=1
+
     was_known=0
     [[ -n "${OLD_DIRS[$relative]-}" ]] && was_known=1
 
     if (( was_known && local_exists && !remote_exists )); then
+
         echo "DELETE LOCAL DIR  $relative"
+
         if rmdir "$LOCAL/$relative" 2>/dev/null; then
             unset 'LOCAL_DIRS[$relative]'
         else
@@ -485,28 +569,44 @@ while IFS=$'\t' read -r _depth relative; do
         fi
 
     elif (( was_known && remote_exists && !local_exists )); then
+
         if remote_dir_has_children "$relative"; then
+
             echo "AVISO: pasta remota ainda não está vazia, adiando: $relative"
+
         else
+
             echo "DELETE REMOTE DIR  $relative"
-            if run_cli delete --host "$HOST" "${REMOTE_DIRS[$relative]}"; then
+
+            if run_cli delete \
+                --host "$HOST" \
+                "${REMOTE_DIRS[$relative]}"
+            then
                 unset 'REMOTE_DIRS[$relative]'
             else
                 echo "ERRO: DELETE REMOTE DIR falhou: $relative"
             fi
         fi
     fi
+
 done < <(tac "$ALL_DIRS_DEPTH")
 
 rm -f "$ALL_DIRS_DEPTH"
 
-# Novo estado de diretórios: tudo que hoje existe confirmadamente
-# dos dois lados.
+# ------------------------------------------------------------
+# NOVO ESTADO DOS DIRETÓRIOS
+# ------------------------------------------------------------
 NEW_DIR_STATE="$(mktemp)"
+
 for relative in "${!LOCAL_DIRS[@]}"; do
-    [[ -n "${REMOTE_DIRS[$relative]-}" ]] && printf '%s\n' "$relative"
+    [[ -n "${REMOTE_DIRS[$relative]-}" ]] &&
+        printf '%s\n' "$relative"
 done | sort -u > "$NEW_DIR_STATE"
+
 mv "$NEW_DIR_STATE" "$DIR_STATE"
 
+# ------------------------------------------------------------
+# FINALIZA
+# ------------------------------------------------------------
 mv "$NEW_STATE" "$STATE"
 rm -f "$ALL_PATHS"
