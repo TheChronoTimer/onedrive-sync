@@ -110,7 +110,7 @@ export async function captureSession(opts: CaptureOptions): Promise<SharepointSe
   fs.mkdirSync(opts.profileDir, { recursive: true, mode: 0o700 });
 
   const context = await chromium.launchPersistentContext(opts.profileDir, {
-    channel: opts.chromeChannel,
+    executablePath: "/usr/bin/chromium",
     headless: opts.headless,
     viewport: { width: 1280, height: 900 },
     args: ['--no-first-run', '--no-default-browser-check'],

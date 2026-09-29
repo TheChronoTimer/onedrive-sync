@@ -175,7 +175,7 @@ export class SharepointClient {
   }
 
   private async raw(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     pathOrUrl: string,
     accept: string,
     body?: BodyInit,
@@ -310,6 +310,63 @@ export class SharepointClient {
     return (text.length > 0 ? JSON.parse(text) : {}) as T;
   }
 
+
+  async deleteFile(path: string): Promise<void> {
+    const web = webOfPath(path);
+    const digest = this.digestProvider
+      ? await this.digestProvider(web, false)
+      : undefined;
+
+    const extra: Record<string, string> = {
+      'IF-MATCH': '*',
+    };
+
+    if (digest) {
+      extra['X-RequestDigest'] = digest;
+    }
+
+    const resp = await this.raw(
+      'DELETE',
+      path,
+      'application/json;odata=nometadata',
+      undefined,
+      extra,
+    );
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`DELETE failed (${resp.status}): ${text}`);
+    }
+  }
+
+  async deleteFolder(path: string): Promise<void> {
+    const web = webOfPath(path);
+    const digest = this.digestProvider
+      ? await this.digestProvider(web, false)
+      : undefined;
+
+    const extra: Record<string, string> = {
+      'IF-MATCH': '*',
+    };
+
+    if (digest) {
+      extra['X-RequestDigest'] = digest;
+    }
+
+    const resp = await this.raw(
+      'DELETE',
+      path,
+      'application/json;odata=nometadata',
+      undefined,
+      extra,
+    );
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`DELETE folder failed (${resp.status}): ${text}`);
+    }
+  }
+
   async postJson<T>(path: string, body?: unknown, extra: Record<string, string> = {}): Promise<T> {
     const payload = body === undefined ? undefined : JSON.stringify(body);
     const headers =
@@ -331,6 +388,7 @@ export class SharepointClient {
     const text = await resp.text();
     return (text.length > 0 ? JSON.parse(text) : {}) as T;
   }
+
 }
 
 function parseContentDispositionFilename(header: string | null): string | undefined {
