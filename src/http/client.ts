@@ -227,7 +227,7 @@ export class SharepointClient {
   }
 
   private async send(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     pathOrUrl: string,
     accept: string,
     body?: BodyInit,
